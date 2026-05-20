@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Juego de la Vida de Conway</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>El Juego de la Vida de Conway</h1>
+
+        <div class="main-layout">
+            <!-- Controles a la izquierda -->
+            <div class="controls">
+                <button id="playBtn" class="btn">▶ Jugar</button>
+                <button id="resetBtn" class="btn">↻ Limpiar</button>
+                <button id="randomBtn" class="btn">🎲 Aleatorio</button>
+                <button id="clearBtn" class="btn">🗑 Limpiar</button>
+                <button id="nextBtn" class="btn">Siguiente Iteración</button>
+                
+                <div class="speed-control">
+                    <label for="speedSlider">Velocidad:</label>
+                    <input type="range" id="speedSlider" min="1" max="20" value="5">
+                    <span class="speed-value" id="speedValue">5</span>
+                </div>
+            </div>
+
+            <!-- Canvas en el centro -->
+            <div class="canvas-container">
+                <canvas id="canvas"></canvas>
+            </div>
+
+            <!-- Estadísticas a la derecha -->
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-label">Generación</div>
+                    <div class="stat-value" id="generation">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Células Vivas</div>
+                    <div class="stat-value" id="alive">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Estado</div>
+                    <div class="stat-value" id="status">Pausado</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/game.js"></script>
+</body>
+</html>
