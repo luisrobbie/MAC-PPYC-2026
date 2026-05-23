@@ -10,6 +10,7 @@ app = FastAPI()
 
 GRID_WIDTH = 50
 GRID_HEIGHT = 30
+NUM_THREADS = 4
 
 game_state = {
     "grid": np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=int),
@@ -37,9 +38,9 @@ def get_neighbors(grid, x, y):
             count += grid[ny, nx]
     return count
 
-def next_generation(grid):
-    new_grid = np.zeros_like(grid)
-    for y in range(GRID_HEIGHT):
+def _compute_chunk(grid, new_grid, y_start, y_end):
+    """Calcula el siguiente estado para las filas [y_start, y_end)."""
+    for y in range(y_start, y_end):
         for x in range(GRID_WIDTH):
             neighbors = get_neighbors(grid, x, y)
             alive = grid[y, x] == 1
@@ -47,8 +48,22 @@ def next_generation(grid):
                 new_grid[y, x] = 1
             elif not alive and neighbors == 3:
                 new_grid[y, x] = 1
-            else:
-                new_grid[y, x] = 0
+
+def next_generation(grid):
+    new_grid = np.zeros_like(grid)
+    chunk_size = GRID_HEIGHT // NUM_THREADS
+    threads = []
+
+    for i in range(NUM_THREADS):
+        y_start = i * chunk_size
+        y_end = GRID_HEIGHT if i == NUM_THREADS - 1 else (i + 1) * chunk_size
+        t = threading.Thread(target=_compute_chunk, args=(grid, new_grid, y_start, y_end))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
     return new_grid
 
 def count_alive(grid):
@@ -72,13 +87,19 @@ async def init_game():
 
 @app.post("/api/game/next")
 async def next_step():
+    # Tomar snapshot bajo lock para no bloquear lecturas durante el cómputo
     with game_state["lock"]:
-        game_state["grid"] = next_generation(game_state["grid"])
+        grid_snapshot = game_state["grid"].copy()
+
+    new_grid = next_generation(grid_snapshot)
+
+    with game_state["lock"]:
+        game_state["grid"] = new_grid
         game_state["generation"] += 1
         return {
             "generation": game_state["generation"],
-            "alive": count_alive(game_state["grid"]),
-            "grid": game_state["grid"].tolist()
+            "alive": count_alive(new_grid),
+            "grid": new_grid.tolist()
         }
 
 @app.post("/api/game/randomize")
