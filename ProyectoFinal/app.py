@@ -5,8 +5,12 @@ from pathlib import Path
 import uvicorn
 import numpy as np
 import threading
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+import time
 
 app = FastAPI()
+executor = ProcessPoolExecutor(max_workers=4)
 
 GRID_WIDTH = 50
 GRID_HEIGHT = 30
@@ -50,6 +54,7 @@ def _compute_chunk(grid, new_grid, y_start, y_end):
                 new_grid[y, x] = 1
 
 def next_generation(grid):
+    start_time = time.time()
     new_grid = np.zeros_like(grid)
     chunk_size = GRID_HEIGHT // NUM_THREADS
     threads = []
@@ -64,10 +69,30 @@ def next_generation(grid):
     for t in threads:
         t.join()
 
-    return new_grid
+    elapsed = time.time() - start_time
+    print(f"[PARALELO] Generación calculada en {elapsed*1000:.2f}ms")
+    return new_grid, elapsed
 
 def count_alive(grid):
     return int(np.sum(grid))
+
+def next_generation_sequential(grid):
+    """Versión secuencial pura para comparación"""
+    start_time = time.time()
+    new_grid = np.zeros_like(grid)
+    
+    for y in range(GRID_HEIGHT):
+        for x in range(GRID_WIDTH):
+            neighbors = get_neighbors(grid, x, y)
+            alive = grid[y, x] == 1
+            if alive and neighbors in [2, 3]:
+                new_grid[y, x] = 1
+            elif not alive and neighbors == 3:
+                new_grid[y, x] = 1
+    
+    elapsed = time.time() - start_time
+    print(f"[SECUENCIAL] Generación calculada en {elapsed*1000:.2f}ms")
+    return new_grid, elapsed
 
 @app.get("/api/game/state")
 async def get_state():
@@ -87,19 +112,35 @@ async def init_game():
 
 @app.post("/api/game/next")
 async def next_step():
+    total_start = time.time()
+    
     # Tomar snapshot bajo lock para no bloquear lecturas durante el cómputo
     with game_state["lock"]:
         grid_snapshot = game_state["grid"].copy()
 
-    new_grid = next_generation(grid_snapshot)
+    # Ejecutar en ProcessPoolExecutor para paralelismo real sin bloquear el event loop
+    loop = asyncio.get_event_loop()
+    compute_start = time.time()
+    new_grid, compute_internal = await loop.run_in_executor(executor, next_generation, grid_snapshot)
+    compute_time = time.time() - compute_start
 
     with game_state["lock"]:
         game_state["grid"] = new_grid
         game_state["generation"] += 1
+        total_time = time.time() - total_start
+        
+        # Imprimir tiempos en consola
+        print(f"[GEN {game_state['generation']}] Interno: {compute_internal*1000:.2f}ms | Con overhead: {compute_time*1000:.2f}ms | Total: {total_time*1000:.2f}ms")
+        
         return {
             "generation": game_state["generation"],
             "alive": count_alive(new_grid),
-            "grid": new_grid.tolist()
+            "grid": new_grid.tolist(),
+            "timing": {
+                "compute_internal_ms": round(compute_internal * 1000, 2),
+                "compute_with_overhead_ms": round(compute_time * 1000, 2),
+                "total_ms": round(total_time * 1000, 2)
+            }
         }
 
 @app.post("/api/game/randomize")
@@ -131,5 +172,27 @@ async def set_cell(x: int, y: int):
             }
     return {"error": "Coordenadas fuera de rango"}
 
+@app.get("/api/game/benchmark")
+async def benchmark():
+    """Compara rendimiento: paralelo vs secuencial"""
+    with game_state["lock"]:
+        grid_snapshot = game_state["grid"].copy()
+    
+    # Versión secuencial
+    loop = asyncio.get_event_loop()
+    seq_grid, seq_time = await loop.run_in_executor(executor, next_generation_sequential, grid_snapshot)
+    
+    # Versión paralela
+    par_grid, par_time = await loop.run_in_executor(executor, next_generation, grid_snapshot)
+    
+    speedup = seq_time / par_time if par_time > 0 else 0
+    
+    return {
+        "sequential_ms": round(seq_time * 1000, 2),
+        "parallel_ms": round(par_time * 1000, 2),
+        "speedup": round(speedup, 2),
+        "improvement_percent": round((speedup - 1) * 100, 1)
+    }
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8001)
