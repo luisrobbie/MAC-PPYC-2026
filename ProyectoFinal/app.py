@@ -5,6 +5,7 @@ from pathlib import Path
 import uvicorn
 import numpy as np
 import threading
+import time
 from multiprocessing import Pool
 from typing import Optional
 
@@ -32,10 +33,9 @@ async def root():
     return FileResponse(str(static_dir / "index.html"))
 
 
-
 def _compute_chunk(args):
     grid_list, y_start, y_end, width, height = args
-    grid = np.array(grid_list, dtype=int)   
+    grid = np.array(grid_list, dtype=int)
 
     chunk_rows = []
     for y in range(y_start, y_end):
@@ -64,7 +64,7 @@ def _compute_chunk(args):
 def next_generation(grid):
     global _pool
     height, width = grid.shape
-    grid_list = grid.tolist()   
+    grid_list = grid.tolist()
 
     chunk_size = GRID_HEIGHT // NUM_THREADS
     tasks = []
@@ -73,15 +73,18 @@ def next_generation(grid):
         y_end   = GRID_HEIGHT if i == NUM_THREADS - 1 else (i + 1) * chunk_size
         tasks.append((grid_list, y_start, y_end, width, height))
 
-   
+    # ── Medir el tiempo real de cómputo paralelo ──
+    start = time.perf_counter()
     results = _pool.map(_compute_chunk, tasks)
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+    print(f"Generación calculada en {elapsed_ms} ms")
 
     new_grid = np.zeros_like(grid)
     for y_start, chunk_rows in results:
         for i, row in enumerate(chunk_rows):
             new_grid[y_start + i] = row
 
-    return new_grid
+    return new_grid, elapsed_ms
 
 
 def count_alive(grid):
@@ -122,7 +125,7 @@ async def next_step():
     with game_state["lock"]:
         grid_snapshot = game_state["grid"].copy()
 
-    new_grid = next_generation(grid_snapshot)
+    new_grid, elapsed_ms = next_generation(grid_snapshot)
 
     with game_state["lock"]:
         game_state["grid"]       = new_grid
@@ -130,7 +133,8 @@ async def next_step():
         return {
             "generation": game_state["generation"],
             "alive":      count_alive(new_grid),
-            "grid":       new_grid.tolist()
+            "grid":       new_grid.tolist(),
+            "ms":         elapsed_ms       
         }
 
 @app.post("/api/game/randomize")
